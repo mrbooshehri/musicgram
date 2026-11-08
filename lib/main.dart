@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async';
 
 import 'embedded_artwork.dart';
+import 'generated_artwork.dart';
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -2327,20 +2328,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   );
 
   Widget _generatedCover(LocalTrack song) {
-    final seed = song.path.codeUnits.fold<int>(
-      0,
-      (value, char) => (value * 31 + char) & 0x7fffffff,
-    );
-    final hue = (seed % 360).toDouble();
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            HSLColor.fromAHSL(1, hue, .55, .35).toColor(),
-            HSLColor.fromAHSL(1, (hue + 75) % 360, .55, .18).toColor(),
-          ],
+          colors: generatedArtworkColors(song.path),
         ),
       ),
       child: const Center(
@@ -3439,7 +3432,10 @@ class PlayerAudioHandler extends BaseAudioHandler with SeekHandler {
     this.telegramLibrary,
     this.playTelegram,
     Future<Uri?> Function(String path)? shareArtwork,
-  }) : _telegramRequest = telegramRequest ?? TelegramClient.shared.request,
+    Future<String> Function(LocalTrack track)? generateArtwork,
+  }) : _generateArtwork =
+           generateArtwork ?? ((track) => saveGeneratedArtwork(track.path)),
+       _telegramRequest = telegramRequest ?? TelegramClient.shared.request,
        _shareArtwork = shareArtwork ?? _shareArtworkWithAndroid {
     player.addListener(_publish);
     NotificationSettings.showArtwork.addListener(_artworkSettingChanged);
@@ -3449,6 +3445,7 @@ class PlayerAudioHandler extends BaseAudioHandler with SeekHandler {
   final PlaybackController player;
   final TelegramRequest _telegramRequest;
   final Future<Uri?> Function(String path) _shareArtwork;
+  final Future<String> Function(LocalTrack track) _generateArtwork;
 
   static Future<Uri?> _shareArtworkWithAndroid(String path) async {
     if (!Platform.isAndroid) return Uri.file(path);
@@ -3603,39 +3600,54 @@ class PlayerAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _loadArtwork(LocalTrack track, int generation) async {
+    bool current() =>
+        generation == _artGeneration &&
+        NotificationSettings.showArtwork.value &&
+        player.currentTrack?.path == track.path;
     try {
-      Uri? uri;
-      if (track.telegramMessage != null) {
-        final path = await resolveTelegramArtwork(
-          track.telegramMessage!,
-          _telegramRequest,
-        );
-        if (path != null) uri = Uri.file(path);
-      } else if (Platform.isAndroid) {
-        final bytes = await const MethodChannel('musicgram/library')
-            .invokeMethod<Uint8List>('artwork', {'path': track.path});
-        if (bytes != null && bytes.isNotEmpty) {
-          final directory = await getTemporaryDirectory();
-          final file = File(
-            '${directory.path}/notification_art_${track.path.hashCode}.img',
+      String? path;
+      try {
+        if (track.telegramMessage != null) {
+          path = await resolveTelegramArtwork(
+            track.telegramMessage!,
+            _telegramRequest,
           );
-          await file.writeAsBytes(bytes, flush: true);
-          uri = Uri.file(file.path);
+        } else if (Platform.isAndroid) {
+          final bytes = await const MethodChannel('musicgram/library')
+              .invokeMethod<Uint8List>('artwork', {'path': track.path});
+          if (bytes != null && bytes.isNotEmpty) {
+            final directory = await getTemporaryDirectory();
+            final file = File(
+              '${directory.path}/notification_art_${track.path.hashCode}.img',
+            );
+            await file.writeAsBytes(bytes, flush: true);
+            path = file.path;
+          }
+        }
+      } catch (_) {
+        // A missing or inaccessible cover falls back to generated artwork.
+      }
+      if (!current()) return;
+      Uri? uri;
+      if (path != null) {
+        try {
+          uri = await _shareArtwork(path);
+        } catch (_) {
+          // Try the generated cover if the original image cannot be shared.
         }
       }
-      if (uri != null && uri.scheme == 'file') {
-        uri = await _shareArtwork(uri.toFilePath());
+      if (!current()) return;
+      if (uri == null) {
+        path = await _generateArtwork(track);
+        if (!current()) return;
+        uri = await _shareArtwork(path);
       }
-      if (generation != _artGeneration ||
-          !NotificationSettings.showArtwork.value ||
-          player.currentTrack?.path != track.path) {
-        return;
-      }
+      if (!current()) return;
       _artUri = uri;
       _lastMediaPath = null;
       _publish();
     } catch (_) {
-      // Playback remains available when artwork cannot be loaded.
+      // Playback remains available when artwork cannot be generated or shared.
     }
   }
 

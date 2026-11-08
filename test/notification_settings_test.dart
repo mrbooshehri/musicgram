@@ -10,6 +10,43 @@ import 'package:musicgram/playback_controller.dart';
 import 'fake_audio_backend.dart';
 
 void main() {
+  test(
+    'publishes generated artwork for a song without embedded artwork',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      NotificationSettings.showArtwork.value = true;
+      final player = PlaybackController(backend: FakeAudioBackend());
+      String? generatedFor;
+      final handler = PlayerAudioHandler(
+        player,
+        generateArtwork: (track) async {
+          generatedFor = track.path;
+          return '/tmp/generated-cover.png';
+        },
+        shareArtwork: (path) async =>
+            Uri.parse('content://com.example.musicgram.artwork/generated'),
+      );
+      addTearDown(() {
+        handler.dispose();
+        player.dispose();
+        NotificationSettings.showArtwork.value = true;
+      });
+      await player.loadQueue(const [
+        LocalTrack(name: 'No cover', path: '/no-cover.mp3'),
+      ], autoplay: false);
+      for (var i = 0; i < 20 && handler.mediaItem.value?.artUri == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(generatedFor, '/no-cover.mp3');
+      expect(
+        handler.mediaItem.value?.artUri,
+        Uri.parse('content://com.example.musicgram.artwork/generated'),
+      );
+      NotificationSettings.showArtwork.value = false;
+      expect(handler.mediaItem.value?.artUri, isNull);
+    },
+  );
+
   test('media artwork follows preference and current track', () async {
     final directory = await Directory.systemTemp.createTemp('notification_art');
     final image = File('${directory.path}/art.jpg');
