@@ -18,14 +18,16 @@ void main() {
           throw StateError('Not Found');
         case 'getChats':
           return {
-            'chat_ids': [1, 2, 3],
+            'chat_ids': [1, 2, 3, 42],
           };
         case 'getMe':
           return {'id': 42};
         case 'getChat':
           final id = request['chat_id'] as int;
           return {
-            'title': ['Alice', 'News', 'Helper'][id - 1],
+            'title': id == 42
+                ? 'My account'
+                : ['Alice', 'News', 'Helper'][id - 1],
             'type': id == 2
                 ? {'@type': 'chatTypeSupergroup', 'is_channel': true}
                 : {'@type': 'chatTypePrivate', 'user_id': id},
@@ -81,15 +83,28 @@ void main() {
     }
     await tester.pumpAndSettle();
     expect(find.text('Alice'), findsOneWidget);
+    expect(find.text('Saved Messages'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Saved Messages')).dy,
+      lessThan(tester.getTopLeft(find.text('Alice')).dy),
+    );
+    await tester.enterText(find.byType(TextField), 'alice');
+    await tester.pump();
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.text('Saved Messages'), findsNothing);
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pump();
     expect(
       tester
-          .widget<CheckboxListTile>(find.byType(CheckboxListTile).first)
+          .widget<CheckboxListTile>(
+            find.widgetWithText(CheckboxListTile, 'Alice'),
+          )
           .value,
       isTrue,
     );
     await tester.tap(find.text('Select all'));
     await tester.pump();
-    expect(find.text('3 selected'), findsOneWidget);
+    expect(find.text('4 selected'), findsOneWidget);
     await tester.tap(find.text('Sync selected chats'));
     await tester.pump();
     for (var i = 0; i < 30 && selected == null; i++) {
@@ -99,7 +114,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     }
     await tester.pumpAndSettle();
-    expect(selected, {1, 2, 3});
-    expect(await tester.runAsync(store.load), {1, 2, 3});
+    expect(selected, {1, 2, 3, 42});
+    expect(await tester.runAsync(store.load), {1, 2, 3, 42});
   });
 }

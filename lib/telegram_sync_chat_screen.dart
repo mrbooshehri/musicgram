@@ -15,10 +15,16 @@ class TelegramSyncChatScreen extends StatefulWidget {
 }
 
 class _SyncChat {
-  const _SyncChat(this.id, this.title, this.category);
+  const _SyncChat(
+    this.id,
+    this.title,
+    this.category, {
+    this.isSavedMessages = false,
+  });
   final int id;
   final String title;
   final int category;
+  final bool isSavedMessages;
 }
 
 class _TelegramSyncChatScreenState extends State<TelegramSyncChatScreen> {
@@ -27,6 +33,7 @@ class _TelegramSyncChatScreenState extends State<TelegramSyncChatScreen> {
   late Future<List<_SyncChat>> chats = _load();
   final selected = <int>{};
   bool saving = false;
+  String query = '';
   late final TelegramSyncSelection selection =
       widget.selection ?? TelegramSyncSelection(request: request);
 
@@ -61,6 +68,8 @@ class _TelegramSyncChatScreenState extends State<TelegramSyncChatScreen> {
       if (raw is! List) throw const FormatException('Invalid chat list');
       ids.addAll(raw.whereType<int>());
     }
+    final account = await request({'@type': 'getMe'});
+    final selfId = account['id'];
     final result = <_SyncChat>[];
     for (final id in ids) {
       final chat = await request({'@type': 'getChat', 'chat_id': id});
@@ -88,13 +97,25 @@ class _TelegramSyncChatScreenState extends State<TelegramSyncChatScreen> {
       result.add(
         _SyncChat(
           id,
-          title is String && title.isNotEmpty ? title : 'Untitled chat',
+          selfId is int &&
+                  type['@type'] == 'chatTypePrivate' &&
+                  type['user_id'] == selfId
+              ? 'Saved Messages'
+              : title is String && title.isNotEmpty
+              ? title
+              : 'Untitled chat',
           category,
+          isSavedMessages:
+              selfId is int &&
+              type['@type'] == 'chatTypePrivate' &&
+              type['user_id'] == selfId,
         ),
       );
     }
     result.sort(
-      (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+      (a, b) => a.isSavedMessages != b.isSavedMessages
+          ? (a.isSavedMessages ? -1 : 1)
+          : a.title.toLowerCase().compareTo(b.title.toLowerCase()),
     );
     return result;
   }
@@ -161,6 +182,18 @@ class _TelegramSyncChatScreenState extends State<TelegramSyncChatScreen> {
           return Column(
             children: [
               Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: TextField(
+                  onChanged: (value) =>
+                      setState(() => query = value.trim().toLowerCase()),
+                  decoration: const InputDecoration(
+                    labelText: 'Search chats',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
                   children: [
@@ -184,10 +217,18 @@ class _TelegramSyncChatScreenState extends State<TelegramSyncChatScreen> {
                 child: TabBarView(
                   children: List.generate(4, (category) {
                     final items = all
-                        .where((chat) => chat.category == category)
+                        .where(
+                          (chat) =>
+                              chat.category == category &&
+                              chat.title.toLowerCase().contains(query),
+                        )
                         .toList();
                     if (items.isEmpty) {
-                      return const Center(child: Text('No chats'));
+                      return Center(
+                        child: Text(
+                          query.isEmpty ? 'No chats' : 'No matching chats',
+                        ),
+                      );
                     }
                     return ListView.builder(
                       itemCount: items.length,

@@ -8,6 +8,20 @@ import 'cast_network_address.dart';
 import 'playback_controller.dart';
 import 'upnp_discovery.dart';
 
+/// Some renderers require the current transport to stop before changing URI.
+Future<void> setCastTransportUri({
+  required Future<void> Function() setUri,
+  required Future<void> Function() stop,
+}) async {
+  try {
+    await setUri();
+  } on UPnPException catch (error) {
+    if (error.errorCode != 701) rethrow;
+    await stop();
+    await setUri();
+  }
+}
+
 class UpnpCastSession implements RemotePlaybackSession {
   UpnpCastSession._(
     this.deviceName,
@@ -97,9 +111,12 @@ class UpnpCastSession implements RemotePlaybackSession {
       if (trackDuration == Duration.zero) {
         metadata = metadata.replaceFirst(' duration="00:00:00"', '');
       }
-      await _transport
-          .setAVTransportURI(uri, metadata: metadata)
-          .timeout(const Duration(seconds: 10));
+      await setCastTransportUri(
+        setUri: () => _transport
+            .setAVTransportURI(uri, metadata: metadata)
+            .timeout(const Duration(seconds: 10)),
+        stop: () => _transport.stop().timeout(const Duration(seconds: 5)),
+      );
       if (_closed) throw StateError('Casting has stopped.');
       final previous = _server;
       _server = server;
