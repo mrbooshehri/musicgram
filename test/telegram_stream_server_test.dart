@@ -53,7 +53,9 @@ void main() {
       }
 
       final stream = await server.register(9, bytes.length);
+      expect(server.bufferedFraction(stream), 0);
       expect(await read(stream), bytes);
+      expect(server.bufferedFraction(stream), 1);
       expect(downloads, 1);
       expect(await read(stream), bytes);
       expect(downloads, 1);

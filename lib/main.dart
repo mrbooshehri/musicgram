@@ -2634,11 +2634,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
           children: [
             SizedBox.square(
               dimension: 104,
-              child: CircularProgressIndicator(
-                value: progress,
-                strokeWidth: 3,
-                backgroundColor: _mutedColor,
-                color: _accentColor,
+              child: ValueListenableBuilder<int>(
+                valueListenable: _telegramStream.bufferRevision,
+                builder: (context, _, _) {
+                  final buffered = _telegramStream.bufferedFraction(
+                    track?.path,
+                  );
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      CircularProgressIndicator(
+                        value: buffered,
+                        strokeWidth: 3,
+                        backgroundColor: _mutedColor,
+                        color: _accentColor.withValues(alpha: .45),
+                      ),
+                      CircularProgressIndicator(
+                        value: progress,
+                        strokeWidth: 3,
+                        backgroundColor: Colors.transparent,
+                        color: _accentColor,
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
             Container(

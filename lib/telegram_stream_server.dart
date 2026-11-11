@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'telegram_music_library.dart';
 import 'telegram_playback_log.dart';
 import 'playback_controller.dart';
@@ -21,6 +23,7 @@ class _StreamFile {
   final int? chatId;
   final int? messageId;
   Future<int>? resolved;
+  int contiguousBytes = 0;
   TdlibRequestException? terminalError;
   DateTime? terminalUntil;
 
@@ -40,6 +43,23 @@ class TelegramStreamServer {
     this.prebufferDelay = const Duration(seconds: 2),
   });
   final TelegramRequest request;
+  final ValueNotifier<int> bufferRevision = ValueNotifier(0);
+
+  double bufferedFraction(String? url) {
+    final file = _registeredFile(url);
+    if (file == null || file.size <= 0) return 0;
+    return (file.contiguousBytes / file.size).clamp(0.0, 1.0);
+  }
+
+  void _recordBuffered(_StreamFile file, int offset, int length) {
+    if (offset > file.contiguousBytes) return;
+    final end = min(file.size, offset + length);
+    if (end > file.contiguousBytes) {
+      file.contiguousBytes = end;
+      if (!_closed) bufferRevision.value++;
+    }
+  }
+
   final Duration prebufferDelay;
   HttpServer? _server;
   Future<HttpServer>? _starting;
@@ -397,6 +417,7 @@ class TelegramStreamServer {
                   'HTTP #$requestNumber cached range bytes=${cached.length}',
                 );
               }
+              _recordBuffered(file, offset, cached.length);
               done.complete(cached);
               return;
             }
@@ -436,6 +457,7 @@ class TelegramStreamServer {
                   'HTTP #$requestNumber range ready bytes=${bytes.length} elapsed=${elapsed.elapsedMilliseconds}ms',
                 );
               }
+              _recordBuffered(file, offset, bytes.length);
               done.complete(bytes);
             } finally {
               await handle.close();
