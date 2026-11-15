@@ -605,6 +605,44 @@ void main() {
     await tester.pump(const Duration(milliseconds: 800));
     expect(playback.currentIndex, 0);
   });
+  testWidgets('browsing all songs keeps the playing queue accessible', (
+    tester,
+  ) async {
+    final previousPicker = FilePickerPlatform.instance;
+    final picker = DelayedFilePicker();
+    FilePickerPlatform.instance = picker;
+    addTearDown(() => FilePickerPlatform.instance = previousPicker);
+    final playback = PlaybackController(backend: FakeAudioBackend());
+    addTearDown(playback.dispose);
+    await playback.loadQueue(const [
+      LocalTrack(name: 'Queued song', path: '/queued'),
+      LocalTrack(name: 'Next song', path: '/next'),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerScreen(
+          leftHanded: false,
+          playbackController: playback,
+          onHandChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.tap(find.text('Next up'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.widgetWithText(ActionChip, 'All songs'));
+    await tester.pump();
+    expect(playback.queue.map((song) => song.name), [
+      'Queued song',
+      'Next song',
+    ]);
+    await tester.tap(find.widgetWithText(ActionChip, 'Queue'));
+    await tester.pump();
+    expect(find.text('Queued song'), findsWidgets);
+    expect(find.text('Next song'), findsWidgets);
+    picker.result.complete([]);
+    await tester.pump();
+  });
   testWidgets('active All songs shortcut keeps the queue sheet open', (
     tester,
   ) async {

@@ -2898,6 +2898,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Row(
                           children: [
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ActionChip(
+                                avatar: const Icon(Icons.queue_music, size: 18),
+                                label: const Text('Queue'),
+                                onPressed: () => update(() {
+                                  showingTelegram = false;
+                                  fromLibrary = false;
+                                  localLibrary = false;
+                                  localCategory = null;
+                                  localTracksFuture = null;
+                                  search = '';
+                                }),
+                              ),
+                            ),
                             for (final category
                                 in QueueShortcutSettings.order.value)
                               Padding(
@@ -2987,26 +3002,104 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               MediaQuery.viewInsetsOf(context).bottom)
                           .clamp(200.0, double.infinity);
                   return SafeArea(
-                    child: loadingLocal
-                        ? SizedBox(
-                            height: sheetHeight,
-                            child: const LibraryLoadingSkeleton(),
-                          )
-                        : localSnapshot.hasError
-                        ? SizedBox(
-                            height: sheetHeight,
-                            child: const Center(
-                              child: Text('Could not load local music.'),
+                    child: SizedBox(
+                      height: sheetHeight,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            title: const Text('Local'),
+                            trailing: TextButton.icon(
+                              icon: const Icon(Icons.send_outlined),
+                              label: const Text('Telegram'),
+                              onPressed: () {
+                                FocusManager.instance.primaryFocus?.unfocus();
+                                _startTelegramBootstrap();
+                                update(() {
+                                  showingTelegram = true;
+                                  telegramCategory = 'All songs';
+                                  search = '';
+                                });
+                              },
                             ),
-                          )
-                        : LocalCategorySheet(
-                            key: ValueKey(localCategory),
-                            category: localCategory!,
-                            tracks: localSnapshot.data ?? const [],
-                            onBack: () => update(() => localCategory = null),
-                            onPlay: (songs, index) =>
-                                _playback.loadQueue(songs, initialIndex: index),
                           ),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Row(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: ActionChip(
+                                    avatar: const Icon(
+                                      Icons.queue_music,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Queue'),
+                                    onPressed: () => update(() {
+                                      fromLibrary = false;
+                                      localLibrary = false;
+                                      localCategory = null;
+                                      localTracksFuture = null;
+                                      search = '';
+                                    }),
+                                  ),
+                                ),
+                                for (final category
+                                    in QueueShortcutSettings.order.value)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ActionChip(
+                                      label: Text(category),
+                                      side: category == localCategory
+                                          ? BorderSide(
+                                              color: _accentColor,
+                                              width: 2,
+                                            )
+                                          : null,
+                                      backgroundColor: category == localCategory
+                                          ? _accentColor.withValues(alpha: .15)
+                                          : null,
+                                      onPressed: category == localCategory
+                                          ? () {}
+                                          : () {
+                                              FocusManager.instance.primaryFocus
+                                                  ?.unfocus();
+                                              update(() {
+                                                search = '';
+                                                if (category == 'All songs') {
+                                                  fromLibrary = true;
+                                                  localLibrary = true;
+                                                  localCategory = null;
+                                                } else {
+                                                  localCategory = category;
+                                                }
+                                              });
+                                            },
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: loadingLocal
+                                ? const LibraryLoadingSkeleton()
+                                : localSnapshot.hasError
+                                ? const Center(
+                                    child: Text('Could not load local music.'),
+                                  )
+                                : LocalCategorySheet(
+                                    key: ValueKey(localCategory),
+                                    category: localCategory!,
+                                    tracks: localSnapshot.data ?? const [],
+                                    onBack: () =>
+                                        update(() => localCategory = null),
+                                    onPlay: (songs, index) => _playback
+                                        .loadQueue(songs, initialIndex: index),
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
                   );
                 }
                 return SafeArea(
@@ -3069,6 +3162,32 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               ),
                               child: Row(
                                 children: [
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ActionChip(
+                                      avatar: const Icon(
+                                        Icons.queue_music,
+                                        size: 18,
+                                      ),
+                                      label: const Text('Queue'),
+                                      side: !fromLibrary
+                                          ? BorderSide(
+                                              color: _accentColor,
+                                              width: 2,
+                                            )
+                                          : null,
+                                      backgroundColor: !fromLibrary
+                                          ? _accentColor.withValues(alpha: .15)
+                                          : null,
+                                      onPressed: () => update(() {
+                                        fromLibrary = false;
+                                        localLibrary = false;
+                                        localCategory = null;
+                                        localTracksFuture = null;
+                                        search = '';
+                                      }),
+                                    ),
+                                  ),
                                   for (final category
                                       in QueueShortcutSettings.order.value)
                                     Padding(
@@ -3112,10 +3231,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                                   return;
                                                 }
                                                 if (category == 'All songs') {
-                                                  Navigator.pop(context);
-                                                  _openFiles(
-                                                    category: category,
-                                                  );
+                                                  update(() {
+                                                    localTracksFuture ??=
+                                                        _loadLocalTracks();
+                                                    fromLibrary = true;
+                                                    localLibrary = true;
+                                                    search = '';
+                                                  });
                                                 } else {
                                                   update(() {
                                                     localTracksFuture ??=
