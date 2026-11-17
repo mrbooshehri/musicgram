@@ -105,6 +105,46 @@ To build and install on a connected device, first find its serial with `adb devi
 
 The script uses `adb install -r` to update an existing installation. Android retains its data when the package ID and signing key match. The current release configuration uses the **debug signing key**; configure a release signing key before distributing production builds.
 
+### Linux build with Docker
+
+Docker can build the experimental Linux desktop player without installing Flutter or native development packages on the host. From the project directory, run:
+
+```bash
+docker buildx build -f Dockerfile.linux --output type=local,dest=build/linux-docker .
+./build/linux-docker/musicgram
+```
+
+The bundle targets x86-64 Linux and is built on Ubuntu 24.04; it requires a compatible Linux system with GTK 3, GStreamer audio plugins, libsecret, and a graphical desktop session to run. The first build downloads Flutter and compiles TDLib.
+
+To configure Telegram, pass your API credentials as Docker build secrets. They are embedded in the resulting application, so don't treat a distributed binary as a secret:
+
+```bash
+read -rp 'Telegram API ID: ' TELEGRAM_API_ID
+read -rsp 'Telegram API hash: ' TELEGRAM_API_HASH; echo
+export TELEGRAM_API_ID TELEGRAM_API_HASH
+docker buildx build -f Dockerfile.linux \
+  --build-arg TELEGRAM_BUILD_REVISION="$(date +%s%N)" \
+  --secret id=telegram_api_id,env=TELEGRAM_API_ID \
+  --secret id=telegram_api_hash,env=TELEGRAM_API_HASH \
+  --build-arg FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn \
+  --build-arg PUB_HOSTED_URL=https://pub.flutter-io.cn \
+  --output type=local,dest=build/linux-docker .
+unset TELEGRAM_API_ID TELEGRAM_API_HASH
+```
+
+The example uses the Flutter community mirror; omit the two mirror arguments if Google and pub.dev are accessible. The build revision forces the app to use the supplied credentials while reusing TDLib, the Flutter SDK, and the cached Dart dependency layer. The first build, a dependency change, or clearing Docker's build cache can require downloads. BuildKit doesn't automatically invalidate cached steps when secret values change, so use a fresh build revision when providing credentials.
+
+If Google's Flutter artifact server and pub.dev are unavailable in your region, use a mirror you trust:
+
+```bash
+docker buildx build -f Dockerfile.linux \
+  --build-arg FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn \
+  --build-arg PUB_HOSTED_URL=https://pub.flutter-io.cn \
+  --output type=local,dest=build/linux-docker .
+```
+
+These options download Flutter binaries and Dart packages from the mirror instead of Google and pub.dev.
+
 ## Using Telegram music
 
 1. Open **Settings → Telegram** and sign in to your account. Configure a proxy there if your connection needs one.

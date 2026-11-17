@@ -1,0 +1,61 @@
+FROM ubuntu:24.04 AS tdlib
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates clang cmake git gperf make libssl-dev zlib1g-dev && \
+    rm -rf /var/lib/apt/lists/*
+ARG TDLIB_REVISION=5aef7d4036be9bb18e3c78f6709da81f47bb7a70
+RUN git init /td && git -C /td remote add origin https://github.com/tdlib/td.git && \
+    git -C /td fetch --depth 1 origin "$TDLIB_REVISION" && \
+    git -C /td checkout --detach FETCH_HEAD && \
+    cmake -S /td -B /td-build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /td-build --target tdjson -j2
+RUN cp -L /td-build/libtdjson.so /tdjson.so
+
+FROM ubuntu:24.04 AS flutter-sdk
+
+ARG FLUTTER_VERSION=3.47.7
+ENV DEBIAN_FRONTEND=noninteractive \
+    FLUTTER_SUPPRESS_ANALYTICS=true \
+    CI=true \
+    PATH=/opt/flutter/bin:${PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates clang cmake curl git ninja-build pkg-config unzip xz-utils zip \
+    libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+    libsecret-1-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG FLUTTER_STORAGE_BASE_URL=https://storage.googleapis.com
+ARG PUB_HOSTED_URL=https://pub.dev
+ENV FLUTTER_STORAGE_BASE_URL=${FLUTTER_STORAGE_BASE_URL} \
+    PUB_HOSTED_URL=${PUB_HOSTED_URL}
+
+RUN git clone --depth 1 --branch "${FLUTTER_VERSION}" https://github.com/flutter/flutter.git /opt/flutter && \
+    git config --global --add safe.directory /opt/flutter && \
+    flutter config --no-analytics && flutter precache --linux
+
+FROM flutter-sdk AS dependencies
+WORKDIR /app
+COPY pubspec.yaml pubspec.lock ./
+RUN flutter pub get
+
+FROM dependencies AS build
+COPY lib/ ./lib/
+COPY assets/ ./assets/
+COPY linux/ ./linux/
+ARG TELEGRAM_BUILD_REVISION=0
+RUN --mount=type=secret,id=telegram_api_id --mount=type=secret,id=telegram_api_hash \
+    test -n "$TELEGRAM_BUILD_REVISION" && \
+    (flutter pub get --offline || flutter pub get) && \
+    if [ -f /run/secrets/telegram_api_id ] && [ -f /run/secrets/telegram_api_hash ]; then \
+      flutter build linux --release --no-pub \
+        --dart-define="TELEGRAM_API_ID=$(cat /run/secrets/telegram_api_id)" \
+        --dart-define="TELEGRAM_API_HASH=$(cat /run/secrets/telegram_api_hash)"; \
+    elif [ -f /run/secrets/telegram_api_id ] || [ -f /run/secrets/telegram_api_hash ]; then \
+      echo "Both Telegram API build secrets are required." >&2; exit 1; \
+    else \
+      flutter build linux --release --no-pub; \
+    fi
+COPY --from=tdlib /tdjson.so /app/build/linux/x64/release/bundle/lib/libtdjson.so
+
+FROM scratch AS bundle
+COPY --from=build /app/build/linux/x64/release/bundle/ /

@@ -37,6 +37,30 @@ class FakeLyricsCache extends LyricsCache {
 }
 
 void main() {
+  testWidgets('searches an untagged filename without its extension', (
+    tester,
+  ) async {
+    final player = PlaybackController(backend: FakeAudioBackend());
+    addTearDown(player.dispose);
+    await player.loadQueue(const [
+      LocalTrack(name: 'Artist - Song.mp3', path: '/untagged.mp3'),
+    ], autoplay: false);
+    final service = FakeLyricsService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LyricsSheet(
+            player: player,
+            cache: FakeLyricsCache(),
+            service: service,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(service.lastQuery, 'Artist - Song');
+  });
+
   testWidgets('search result selection is cached and lyrics are displayed', (
     tester,
   ) async {

@@ -1,0 +1,11 @@
+*
+!Dockerfile.linux
+!pubspec.yaml
+!pubspec.lock
+!lib/
+!lib/**
+!assets/
+!assets/**
+!linux/
+!linux/**
+linux/flutter/ephemeral/

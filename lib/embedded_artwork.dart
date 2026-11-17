@@ -21,7 +21,7 @@ class EmbeddedArtwork {
     late final Future<Uint8List?> future;
     future =
         (() async {
-          if (!Platform.isAndroid) return null;
+          if (!Platform.isAndroid && !Platform.isLinux) return null;
           try {
             return await const MethodChannel('musicgram/library')
                 .invokeMethod<Uint8List>('artwork', {'path': path});

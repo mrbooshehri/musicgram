@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -44,10 +45,13 @@ class DownloadedTracks extends ChangeNotifier {
     for (final entry in values.entries) {
       if (entry.key is! String || entry.value is! String) continue;
       try {
-        if (await _channel.invokeMethod<bool>('downloadExists', {
-              'uri': entry.value,
-            }) ==
-            true) {
+        final exists = Platform.isLinux
+            ? await File.fromUri(Uri.parse(entry.value as String)).exists()
+            : await _channel.invokeMethod<bool>('downloadExists', {
+                    'uri': entry.value,
+                  }) ==
+                  true;
+        if (exists) {
           _uris[entry.key as String] = entry.value as String;
         }
       } on PlatformException {

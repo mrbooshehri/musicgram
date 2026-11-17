@@ -9,7 +9,7 @@ import 'telegram_session_store.dart';
 import 'telegram_errors.dart';
 import 'telegram_connection_log.dart';
 
-/// Android bridge to the TDLib JSON interface.
+/// Platform bridge to the TDLib JSON interface.
 class TelegramClient extends ChangeNotifier {
   TelegramClient._();
   @visibleForTesting

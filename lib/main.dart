@@ -357,6 +357,7 @@ class _MusicGramAppState extends State<MusicGramApp> {
                     ),
                   ),
                   home: PlayerScreen(
+                    linuxDesktop: Platform.isLinux,
                     leftHanded: leftHanded,
                     onHandChanged: changeHand,
                     onPlaybackReady: (player) {
@@ -378,8 +379,10 @@ class PlayerScreen extends StatefulWidget {
     required this.onHandChanged,
     this.playbackController,
     this.onPlaybackReady,
+    this.linuxDesktop = false,
   });
   final bool leftHanded;
+  final bool linuxDesktop;
   final ValueChanged<bool> onHandChanged;
   final PlaybackController? playbackController;
   final ValueChanged<PlaybackController>? onPlaybackReady;
@@ -774,18 +777,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (await temp.length() != response.contentLength) {
           throw StateError('Download was incomplete');
         }
-        final uri = await const MethodChannel('musicgram/library')
-            .invokeMethod<String>('saveTelegramDownload', {
-              'path': temp.path,
-              'name': safeName.isEmpty || safeName == '.' || safeName == '..'
-                  ? '${song.telegramFileId}.audio'
-                  : safeName,
-              'folder':
-                  safeFolder.isEmpty || safeFolder == '.' || safeFolder == '..'
-                  ? 'Telegram'
-                  : safeFolder,
-              'rootFolder': DownloadSettings.shared.folder,
-            });
+        final name = safeName.isEmpty || safeName == '.' || safeName == '..'
+            ? '${song.telegramFileId}.audio'
+            : safeName;
+        final folder =
+            safeFolder.isEmpty || safeFolder == '.' || safeFolder == '..'
+            ? 'Telegram'
+            : safeFolder;
+        String? uri;
+        if (Platform.isLinux) {
+          final downloads = await getDownloadsDirectory();
+          if (downloads == null) {
+            throw StateError('Downloads folder unavailable');
+          }
+          final root = DownloadSettings.shared.folder.replaceAll(
+            RegExp(r'[\\/:*?"<>|\x00-\x1f]'),
+            '_',
+          );
+          final directory = Directory(
+            '${downloads.path}/${root.isEmpty || root == '.' || root == '..' ? 'MusicGram' : root}/$folder',
+          );
+          await directory.create(recursive: true);
+          var target = File('${directory.path}/$name');
+          for (var n = 1; await target.exists(); n++) {
+            target = File('${directory.path}/$n-$name');
+          }
+          await temp.copy(target.path);
+          uri = target.uri.toString();
+        } else {
+          uri = await const MethodChannel('musicgram/library')
+              .invokeMethod<String>('saveTelegramDownload', {
+                'path': temp.path,
+                'name': name,
+                'folder': folder,
+                'rootFolder': DownloadSettings.shared.folder,
+              });
+        }
         if (uri != null) {
           await DownloadedTracks.shared.mark(song.downloadKey, uri);
         }
@@ -846,11 +873,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
           telegramMessage: messages[i],
           playlistName: playlistName,
           path: savedUri != null
-              ? (await const MethodChannel('musicgram/library')
-                        .invokeMethod<String>('localAudioPath', {
-                          'uri': savedUri,
-                        }) ??
-                    (throw StateError('Local audio unavailable')))
+              ? (Platform.isLinux
+                    ? Uri.parse(savedUri).toFilePath()
+                    : (await const MethodChannel('musicgram/library')
+                              .invokeMethod<String>('localAudioPath', {
+                                'uri': savedUri,
+                              }) ??
+                          (throw StateError('Local audio unavailable'))))
               : await _telegramStream.register(
                   file['id'] as int,
                   file['size'] as int,
@@ -2011,6 +2040,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.linuxDesktop) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          _linuxPlayer(),
+          if (_telegramBootstrapActive) _telegramBootstrap(),
+        ],
+      );
+    }
     final left = widget.leftHanded;
     return Stack(
       fit: StackFit.expand,
@@ -2073,23 +2111,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
           ),
         ),
-        if (_telegramBootstrapActive)
-          Offstage(
-            offstage: true,
-            child: SizedBox(
-              width: 360,
-              height: 640,
-              child: TickerMode(
-                enabled: false,
-                child: TelegramScreen(
-                  onBootstrapStatus: _onTelegramBootstrapStatus,
-                ),
-              ),
-            ),
-          ),
+        if (_telegramBootstrapActive) _telegramBootstrap(),
       ],
     );
   }
+
+  Widget _telegramBootstrap() => Offstage(
+    offstage: true,
+    child: SizedBox(
+      width: 360,
+      height: 640,
+      child: TickerMode(
+        enabled: false,
+        child: TelegramScreen(onBootstrapStatus: _onTelegramBootstrapStatus),
+      ),
+    ),
+  );
 
   Widget _landscape(bool left) => Padding(
     key: const Key('landscapePlayer'),
@@ -2299,8 +2336,330 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ),
   );
 
-  Future<Uint8List?> _artFor(LocalTrack song) =>
-      EmbeddedArtwork.load(song.path);
+  final Map<String, Future<Uint8List?>> _telegramCoverCache = {};
+  final Map<String, DateTime> _telegramCoverRetryAfter = {};
+
+  Future<Uint8List?> _artFor(LocalTrack song) {
+    if (song.telegramMessage == null) return EmbeddedArtwork.load(song.path);
+    final previous = _telegramCoverCache[song.path];
+    final retryAt = _telegramCoverRetryAfter[song.path];
+    if (previous != null &&
+        (retryAt == null || DateTime.now().isBefore(retryAt))) {
+      return previous;
+    }
+    _telegramCoverRetryAfter.remove(song.path);
+    late final Future<Uint8List?> future;
+    future =
+        (() async {
+          try {
+            final path = await resolveTelegramArtwork(
+              song.telegramMessage!,
+              TelegramClient.shared.request,
+            );
+            if (path != null) return await File(path).readAsBytes();
+            return await EmbeddedArtwork.load(song.path);
+          } catch (_) {
+            return null;
+          }
+        })().then((value) {
+          if (value == null &&
+              identical(_telegramCoverCache[song.path], future)) {
+            _telegramCoverRetryAfter[song.path] = DateTime.now().add(
+              const Duration(seconds: 10),
+            );
+          }
+          return value;
+        });
+    _telegramCoverCache[song.path] = future;
+    if (_telegramCoverCache.length > 30) {
+      final oldest = _telegramCoverCache.keys.first;
+      _telegramCoverCache.remove(oldest);
+      _telegramCoverRetryAfter.remove(oldest);
+    }
+    return future;
+  }
+
+  Future<void> _linuxChooseMusic() async {
+    try {
+      final tracks = await _loadLocalTracks();
+      if (tracks.isNotEmpty) await _playback.loadQueue(tracks);
+    } catch (_) {
+      if (mounted) {
+        _showMessage(
+          'Could not open your music files.',
+          kind: AppNoticeKind.error,
+        );
+      }
+    }
+  }
+
+  Widget _linuxPlayer() {
+    final colors = Theme.of(context).colorScheme;
+    final current = track;
+    final durationMs = _playback.duration.inMilliseconds;
+    final positionMs = _playback.position.inMilliseconds.clamp(
+      0,
+      durationMs > 0 ? durationMs : 0,
+    );
+    final queue = _playback.queue;
+    final details = Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Flexible(child: AspectRatio(aspectRatio: 1, child: _cover(current))),
+        const SizedBox(height: 20),
+        Text(
+          current?.displayTitle ?? 'Choose music to start',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          current?.displayArtist ?? 'Your music, on your desktop',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: colors.onSurfaceVariant),
+        ),
+      ],
+    );
+    final queueView = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Current queue',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              Text(
+                '${queue.length} songs',
+                style: TextStyle(color: colors.onSurfaceVariant),
+              ),
+              IconButton(
+                tooltip: 'Choose music files',
+                onPressed: _linuxChooseMusic,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: queue.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.queue_music_rounded,
+                          size: 52,
+                          color: colors.onSurfaceVariant,
+                        ),
+                        const SizedBox(height: 16),
+                        const Text('Your queue is empty'),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: _linuxChooseMusic,
+                          icon: const Icon(Icons.library_music_outlined),
+                          label: const Text('Choose music files'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: queue.length,
+                  itemBuilder: (context, index) {
+                    final song = queue[index];
+                    final selected = index == _playback.currentIndex;
+                    return ListTile(
+                      selected: selected,
+                      selectedTileColor: colors.primaryContainer.withValues(
+                        alpha: .45,
+                      ),
+                      leading: _cover(song, size: 44),
+                      title: Text(
+                        song.displayTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        song.displayArtist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: selected
+                          ? Icon(Icons.graphic_eq, color: colors.primary)
+                          : null,
+                      onTap: () => _playback.playTrackAt(index),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('MusicGram'),
+        actions: [
+          IconButton(
+            tooltip: 'Telegram music',
+            onPressed: _openTelegramLogin,
+            icon: const Icon(Icons.send_outlined),
+          ),
+          IconButton(
+            tooltip: 'Lyrics',
+            onPressed: current == null ? null : _showLyrics,
+            icon: const Icon(Icons.lyrics_outlined),
+          ),
+          IconButton(
+            tooltip: 'Choose music files',
+            onPressed: _linuxChooseMusic,
+            icon: const Icon(Icons.library_add_outlined),
+          ),
+          IconButton(
+            key: const Key('settingsButton'),
+            tooltip: 'Settings',
+            onPressed: _openSettings,
+            icon: const Icon(Icons.settings_outlined),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 700) {
+            return Column(
+              children: [
+                SizedBox(
+                  height: (constraints.maxHeight * .36).clamp(150.0, 300.0),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: details,
+                  ),
+                ),
+                Expanded(child: queueView),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 420,
+                      maxHeight: 540,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: details,
+                    ),
+                  ),
+                ),
+              ),
+              VerticalDivider(width: 1, color: colors.outlineVariant),
+              Expanded(flex: 5, child: queueView),
+            ],
+          );
+        },
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Material(
+          color: colors.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text(_formatTime(_playback.position)),
+                    Expanded(
+                      child: Slider(
+                        value: durationMs > 0 ? positionMs / durationMs : 0,
+                        onChanged: durationMs > 0
+                            ? (value) => _playback.seek(
+                                Duration(
+                                  milliseconds: (value * durationMs).round(),
+                                ),
+                              )
+                            : null,
+                      ),
+                    ),
+                    Text(_formatTime(_playback.duration)),
+                  ],
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: 'Shuffle',
+                      isSelected: _playback.shuffle,
+                      color: _playback.shuffle
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
+                      onPressed: () => _playback.setShuffle(!_playback.shuffle),
+                      icon: const Icon(Icons.shuffle),
+                    ),
+                    IconButton(
+                      tooltip: 'Previous',
+                      onPressed: current == null ? null : _playback.previous,
+                      icon: const Icon(Icons.skip_previous),
+                    ),
+                    IconButton.filled(
+                      tooltip: _playback.showPauseControl ? 'Pause' : 'Play',
+                      onPressed: current == null
+                          ? null
+                          : _playback.togglePlayback,
+                      icon: Icon(
+                        _playback.showPauseControl
+                            ? Icons.pause
+                            : Icons.play_arrow,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Next',
+                      onPressed: current == null ? null : _playback.next,
+                      icon: const Icon(Icons.skip_next),
+                    ),
+                    IconButton(
+                      tooltip: 'Repeat',
+                      isSelected: _playback.repeat,
+                      color: _playback.repeat
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
+                      onPressed: () => _playback.setRepeat(!_playback.repeat),
+                      icon: const Icon(Icons.repeat),
+                    ),
+                    if (MediaQuery.sizeOf(context).width >= 550) ...[
+                      const SizedBox(width: 20),
+                      const Icon(Icons.volume_up_outlined),
+                      SizedBox(
+                        width: 120,
+                        child: Slider(
+                          value: _playback.volume.clamp(0.0, 1.0),
+                          onChanged: _playback.setVolume,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _cover(LocalTrack? song, {double? size}) => ClipRRect(
     borderRadius: BorderRadius.circular(12),

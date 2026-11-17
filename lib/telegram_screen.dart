@@ -535,7 +535,9 @@ class _TelegramScreenState extends State<TelegramScreen> {
       // The page may have closed while TDLib was changing state.
       await client.send({'@type': 'getAuthorizationState'});
       await client.send({'@type': 'getProxies', '@extra': 'proxy_status'});
-    } else if (Platform.isAndroid && apiId > 0 && apiHash.isNotEmpty) {
+    } else if ((Platform.isAndroid || Platform.isLinux) &&
+        apiId > 0 &&
+        apiHash.isNotEmpty) {
       try {
         final directory = await TelegramSessionStore().activeDirectory();
         final hasSession = await directory.exists();
@@ -1266,7 +1268,7 @@ class _TelegramScreenState extends State<TelegramScreen> {
     logEvent(
       'Starting connection (${proxyType == 'none' ? 'direct' : proxyType})',
     );
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isLinux) {
       setState(
         () => error = 'Telegram is currently available on Android only.',
       );
@@ -1408,6 +1410,7 @@ class _TelegramScreenState extends State<TelegramScreen> {
             parametersSent = true;
             logEvent('Initializing TDLib');
             final dir = await TelegramSessionStore().activeDirectory();
+            await dir.create(recursive: true);
             await client.send({
               '@type': 'setTdlibParameters',
               'database_directory': dir.path,
@@ -1416,7 +1419,7 @@ class _TelegramScreenState extends State<TelegramScreen> {
               'api_id': apiId,
               'api_hash': apiHash,
               'system_language_code': 'en',
-              'device_model': 'Android',
+              'device_model': Platform.isLinux ? 'Linux' : 'Android',
               'application_version': '0.1.0',
             });
           } else if (type == 'authorizationStateWaitPhoneNumber') {

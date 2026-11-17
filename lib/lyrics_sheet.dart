@@ -96,7 +96,16 @@ class _LyricsSheetState extends State<LyricsSheet> {
       });
       return;
     }
+    final missingTags =
+        track.title == null &&
+        track.displayArtist == 'Unknown artist' &&
+        track.telegramMessage == null;
+    final fileQuery = track.displayTitle.replaceFirst(
+      RegExp(r'\.(mp3|m4a|aac|flac|ogg|opus|wav|wma)$', caseSensitive: false),
+      '',
+    );
     await _search(
+      query: missingTags ? fileQuery : null,
       title: track.displayTitle,
       artist: track.displayArtist,
       generation: generation,
