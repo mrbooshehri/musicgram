@@ -672,6 +672,41 @@ void main() {
     expect(find.text('Current queue'), findsOneWidget);
     expect(playback.isAllSongsQueue, isTrue);
   });
+  testWidgets('open queue scrolls to a newly playing track', (tester) async {
+    final playback = PlaybackController(backend: FakeAudioBackend());
+    addTearDown(playback.dispose);
+    await playback.loadQueue(
+      List.generate(
+        30,
+        (i) => LocalTrack(name: 'Queue track $i', path: '/queue-$i'),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerScreen(
+          leftHanded: false,
+          playbackController: playback,
+          onHandChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.tap(find.text('Next up'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await playback.playTrackAt(25);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.text('Queue track 25'),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('open queue updates highlight as playback advances', (
     tester,
   ) async {

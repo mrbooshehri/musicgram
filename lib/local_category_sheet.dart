@@ -14,12 +14,14 @@ class LocalCategorySheet extends StatefulWidget {
     required this.onPlay,
     this.playlists,
     this.onBack,
+    this.embedded = false,
   });
   final String category;
   final List<LocalTrack> tracks;
   final Future<void> Function(List<LocalTrack>, int) onPlay;
   final Future<List<Map<String, dynamic>>>? playlists;
   final VoidCallback? onBack;
+  final bool embedded;
   @override
   State<LocalCategorySheet> createState() => _LocalCategorySheetState();
 }
@@ -149,7 +151,7 @@ class _LocalCategorySheetState extends State<LocalCategorySheet> {
                                         selected!,
                                         selected!.indexOf(song),
                                       );
-                                      if (context.mounted) {
+                                      if (context.mounted && !widget.embedded) {
                                         Navigator.pop(context);
                                       }
                                     },

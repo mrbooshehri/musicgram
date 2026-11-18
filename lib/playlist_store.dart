@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
@@ -14,6 +15,68 @@ class PlaylistStore {
   String? _loadedSession;
   bool? _loadedAccess;
   static Future<void> _writes = Future.value();
+
+  static bool _sameFavorite(Map entry, Map track, bool telegram) => telegram
+      ? entry['chat_id'] == track['chat_id'] && entry['id'] == track['id']
+      : entry['path'] == track['path'];
+
+  Future<bool> isFavorite(
+    Map<String, dynamic> track, {
+    required bool telegram,
+  }) async {
+    await _writes;
+    final lists = await load();
+    return lists
+        .where(
+          (p) =>
+              p['type'] == (telegram ? 'telegram' : 'local') &&
+              p['name'] == 'Favorites',
+        )
+        .any(
+          (p) => (p['tracks'] as List? ?? []).whereType<Map>().any(
+            (entry) => _sameFavorite(entry, track, telegram),
+          ),
+        );
+  }
+
+  Future<bool> toggleFavorite(
+    Map<String, dynamic> track, {
+    required bool telegram,
+  }) async {
+    // Serialize the complete read-modify-write operation with other favorite taps.
+    final completer = Completer<bool>();
+    final previous = _favoriteWrites;
+    _favoriteWrites = previous.catchError((_) {}).then((_) async {
+      try {
+        final lists = await load();
+        final type = telegram ? 'telegram' : 'local';
+        var index = lists.indexWhere(
+          (p) => p['type'] == type && p['name'] == 'Favorites',
+        );
+        if (index < 0) {
+          lists.add({'name': 'Favorites', 'type': type, 'tracks': <Object>[]});
+          index = lists.length - 1;
+        }
+        final entries = List<dynamic>.of(lists[index]['tracks'] as List? ?? []);
+        final found = entries.indexWhere(
+          (entry) => entry is Map && _sameFavorite(entry, track, telegram),
+        );
+        if (found >= 0) {
+          entries.removeAt(found);
+        } else {
+          entries.add(track);
+        }
+        lists[index] = {...lists[index], 'tracks': entries};
+        await save(lists);
+        completer.complete(found < 0);
+      } catch (error, stack) {
+        completer.completeError(error, stack);
+      }
+    });
+    return completer.future;
+  }
+
+  static Future<void> _favoriteWrites = Future.value();
 
   Future<String> _session() =>
       sessionId?.call() ??

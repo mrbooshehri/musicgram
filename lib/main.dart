@@ -19,6 +19,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'arc_volume_slider.dart';
 import 'appearance_settings.dart';
+import 'gogh_presets.dart';
 import 'about_diagnostics_screen.dart';
 import 'diagnostics_logs_screen.dart';
 import 'notification_settings.dart';
@@ -66,6 +67,54 @@ enum AppPalette {
   tokyo,
   solarized,
   oneDark,
+  goghUbuntu,
+  goghMaterialTheme,
+  goghTokyoNightMoon,
+  goghNightOwl,
+  goghKanagawaWave,
+  goghRosePine,
+  goghIRBlack,
+  goghZenburn,
+  goghSonokai,
+  goghVesper,
+  goghCatppuccinFrappe,
+  goghHorizon,
+  goghTomorrowNight,
+  goghPanda,
+  goghCatppuccinMacchiato,
+  goghGithubLight,
+  goghGitHubDark,
+  goghDoomOne,
+  goghCobalt2,
+  goghKanagawaDragon,
+  goghIcebergDark,
+  goghSpacegray,
+  goghOneHalfDark,
+  goghNord,
+  goghSynthwave84,
+  goghNightfox,
+  goghAyuDark,
+  goghPapercolorDark,
+  goghGruvboxDark,
+  goghRosePineMoon,
+  goghSolarizedDark,
+  goghDoomVibrant,
+  goghAndromeda,
+  goghSnazzy,
+  goghSeoul256,
+  goghCatppuccinMocha,
+  goghOceanicNext,
+  goghDracula,
+  goghHybrid,
+  goghEverforestLight,
+  goghPalenight,
+  goghOneDarkPro,
+  goghAura,
+  goghMonokai,
+  goghEverforestDark,
+  goghTokyoNightStorm,
+  goghAyuMirage,
+  goghGruvboxLight,
 }
 
 final ValueNotifier<AppPalette> appPalette = ValueNotifier(AppPalette.gram);
@@ -282,6 +331,7 @@ class _MusicGramAppState extends State<MusicGramApp> {
                     const Color(0xFFEAEAEB),
                     const Color(0xFF383A42),
                   ),
+                  _ => goghThemeColors(goghPresets[palette.name]!),
                 };
                 Color role(String key, Color fallback) =>
                     colors[key] == null ? fallback : Color(colors[key]!);
@@ -300,10 +350,9 @@ class _MusicGramAppState extends State<MusicGramApp> {
                   selectedAccent ?? accent,
                 );
                 Color onPrimary(Color color) =>
-                    ThemeData.estimateBrightnessForColor(color) ==
-                        Brightness.dark
-                    ? Colors.white
-                    : Colors.black;
+                    color.computeLuminance() > 0.179
+                    ? Colors.black
+                    : Colors.white;
                 return MaterialApp(
                   title: 'MusicGram',
                   navigatorKey: _navigatorKey,
@@ -332,6 +381,10 @@ class _MusicGramAppState extends State<MusicGramApp> {
                     colorScheme: ColorScheme.dark(
                       primary: darkPrimary,
                       onPrimary: onPrimary(darkPrimary),
+                      secondary: darkPrimary,
+                      onSecondary: onPrimary(darkPrimary),
+                      secondaryContainer: darkPrimary,
+                      onSecondaryContainer: onPrimary(darkPrimary),
                       surface: darkCard,
                       onSurface: darkForeground,
                       onSurfaceVariant: darkForeground.withValues(alpha: .8),
@@ -351,6 +404,10 @@ class _MusicGramAppState extends State<MusicGramApp> {
                     colorScheme: ColorScheme.light(
                       primary: lightPrimary,
                       onPrimary: onPrimary(lightPrimary),
+                      secondary: lightPrimary,
+                      onSecondary: onPrimary(lightPrimary),
+                      secondaryContainer: lightPrimary,
+                      onSecondaryContainer: onPrimary(lightPrimary),
                       surface: lightCard,
                       onSurface: lightForeground,
                       onSurfaceVariant: lightForeground.withValues(alpha: .8),
@@ -392,6 +449,103 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
+  bool _favorite = false;
+  bool _favoriteBusy = false;
+  String? _favoriteKey;
+
+  Map<String, dynamic>? _favoriteEntry(LocalTrack song) {
+    if (song.telegramFileId != null) {
+      final message = song.telegramMessage;
+      return message?['chat_id'] is int && message?['id'] is int
+          ? message
+          : null;
+    }
+    return {
+      'name': song.name,
+      'path': song.path,
+      'title': song.title,
+      'artist': song.artist,
+      'album': song.album,
+      'genre': song.genre,
+    };
+  }
+
+  void _refreshFavorite() {
+    final song = track;
+    final key = song == null
+        ? null
+        : '${TelegramClient.shared.verifiedSessionId}:${song.path}';
+    if (key == _favoriteKey) return;
+    _favoriteKey = key;
+    _favorite = false;
+    if (song == null) return;
+    final entry = _favoriteEntry(song);
+    if (entry == null) return;
+    PlaylistStore()
+        .isFavorite(entry, telegram: song.telegramFileId != null)
+        .then((value) {
+          if (mounted && _favoriteKey == key) setState(() => _favorite = value);
+        })
+        .catchError((_) {});
+  }
+
+  Future<void> _toggleFavorite() async {
+    final song = track;
+    if (song == null || _favoriteBusy) return;
+    final entry = _favoriteEntry(song);
+    if (entry == null) {
+      _showMessage('Track details are unavailable.', kind: AppNoticeKind.error);
+      return;
+    }
+    final key = _favoriteKey;
+    setState(() => _favoriteBusy = true);
+    try {
+      final value = await PlaylistStore().toggleFavorite(
+        entry,
+        telegram: song.telegramFileId != null,
+      );
+      if (mounted && _favoriteKey == key) setState(() => _favorite = value);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Could not update Favorites.', kind: AppNoticeKind.error);
+      }
+    } finally {
+      if (mounted) setState(() => _favoriteBusy = false);
+    }
+  }
+
+  Widget _favoriteButton({bool labeled = false}) {
+    final icon = Icon(_favorite ? Icons.favorite : Icons.favorite_border);
+    final color = _favorite
+        ? _accentColor
+        : Theme.of(context).colorScheme.onSurface;
+    if (labeled) {
+      return TextButton.icon(
+        onPressed: track == null || _favoriteBusy ? null : _toggleFavorite,
+        style: TextButton.styleFrom(
+          foregroundColor: color,
+          visualDensity: VisualDensity.compact,
+          minimumSize: const Size(0, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: icon,
+        label: const Text('Favorite'),
+      );
+    }
+    return IconButton(
+      tooltip: _favorite ? 'Remove from Favorites' : 'Add to Favorites',
+      onPressed: track == null || _favoriteBusy ? null : _toggleFavorite,
+      color: color,
+      icon: icon,
+    );
+  }
+
+  final ScrollController _linuxQueueScroll = ScrollController();
+
+  String? _lastLinuxQueueTrack;
+  bool _linuxTelegram = false;
+  String _linuxCategory = 'Current queue';
+  List<LocalTrack> _linuxLibrary = [];
   String? _lastPlaybackError;
   late final PlaybackController _playback;
   late final bool _ownsPlayback;
@@ -1009,11 +1163,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) widget.onPlaybackReady?.call(_playback);
     });
     _playback.addListener(_onPlaybackChanged);
+    _refreshFavorite();
     if (_ownsPlayback) unawaited(_loadPlaybackOptions());
     if (_ownsPlayback) unawaited(_refreshProxyState());
     if (_ownsPlayback && Platform.isAndroid) {
       _startAudioService();
       unawaited(_recoverTelegramSync());
+    } else if (_ownsPlayback && Platform.isLinux) {
+      unawaited(_restoreLinuxQueue());
     } else {
       _restoring = false;
     }
@@ -1084,6 +1241,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPlaybackChanged() {
+    _refreshFavorite();
+    final queueTrack = '${_playback.currentIndex}:${track?.path}';
+    if (widget.linuxDesktop && queueTrack != _lastLinuxQueueTrack) {
+      _lastLinuxQueueTrack = queueTrack;
+      if (_linuxCategory == 'Current queue') {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_linuxQueueScroll.hasClients) return;
+          final position = _linuxQueueScroll.position;
+          final target = (_playback.currentIndex * 72.0).clamp(
+            0.0,
+            position.maxScrollExtent,
+          );
+          _linuxQueueScroll.animateTo(
+            target,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOut,
+          );
+        });
+      }
+    }
     final playbackError = _playback.errorMessage;
     if (playbackError != null && playbackError != _lastPlaybackError) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1107,6 +1284,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final file = File(
         '${(await getApplicationSupportDirectory()).path}/playback_state.json',
       );
+      await file.parent.create(recursive: true);
       await file.writeAsString(
         jsonEncode({
           'path': current.path,
@@ -1114,9 +1292,141 @@ class _PlayerScreenState extends State<PlayerScreen> {
           'volume': _playback.volume,
           'repeat': _playback.repeat,
           'shuffle': _playback.shuffle,
+          if (Platform.isLinux)
+            'session': TelegramClient.shared.verifiedSessionId,
+          if (Platform.isLinux) 'queue_index': _playback.currentIndex,
+          if (Platform.isLinux)
+            'queue': _playback.queue
+                .map(
+                  (item) => {
+                    'name': item.name,
+                    'path': item.path,
+                    'title': item.title,
+                    'artist': item.artist,
+                    'album': item.album,
+                    'genre': item.genre,
+                    'telegram_message': item.telegramMessage,
+                    'playlist': item.playlistName,
+                  },
+                )
+                .toList(),
         }),
       );
     } catch (_) {}
+  }
+
+  Future<void> _restoreLinuxQueue() async {
+    try {
+      final file = File(
+        '${(await getApplicationSupportDirectory()).path}/playback_state.json',
+      );
+      final saved =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final rows = saved['queue'];
+      if (rows is! List) return;
+      final hasTelegram = rows.whereType<Map>().any(
+        (row) => row['telegram_message'] is Map,
+      );
+      if (hasTelegram) {
+        if (!await _ensureTelegramSession() ||
+            TelegramClient.shared.verifiedSessionId != saved['session']) {
+          return;
+        }
+      }
+      final tracks = <LocalTrack>[];
+      var restoredIndex = 0;
+      for (
+        var originalIndex = 0;
+        originalIndex < rows.length;
+        originalIndex++
+      ) {
+        final row = rows[originalIndex];
+        if (row is! Map) continue;
+        final message = row['telegram_message'];
+        if (message is Map) {
+          final content = message['content'];
+          final media = content is Map
+              ? content['audio'] ?? content['document']
+              : null;
+          final file = media is Map
+              ? media['audio'] ?? media['document']
+              : null;
+          if (file is! Map ||
+              file['id'] is! int ||
+              file['size'] is! int ||
+              (file['size'] as int) <= 0) {
+            continue;
+          }
+          final typedMessage = Map<String, dynamic>.from(message);
+          final key = DownloadedTracks.keyFor(typedMessage);
+          final uri = DownloadedTracks.shared.uriFor(key);
+          final path = uri != null
+              ? Uri.parse(uri).toFilePath()
+              : await _telegramStream.register(
+                  file['id'] as int,
+                  file['size'] as int,
+                  remoteId: _telegramRemoteId(file),
+                  chatId: message['chat_id'] is int
+                      ? message['chat_id'] as int
+                      : null,
+                  messageId: message['id'] is int ? message['id'] as int : null,
+                );
+          if (originalIndex == saved['queue_index']) {
+            restoredIndex = tracks.length;
+          }
+          tracks.add(
+            LocalTrack(
+              name: row['name'] as String? ?? 'Telegram track',
+              path: path,
+              title: row['title'] as String?,
+              artist: row['artist'] as String?,
+              telegramFileId: file['id'] as int,
+              telegramMessage: typedMessage,
+              downloadKey: key,
+              playlistName: row['playlist'] as String?,
+            ),
+          );
+          continue;
+        }
+        final path = row['path'];
+        if (path is! String || !await File(path).exists()) continue;
+        if (originalIndex == saved['queue_index']) {
+          restoredIndex = tracks.length;
+        }
+        tracks.add(
+          LocalTrack(
+            name: row['name'] as String? ?? path,
+            path: path,
+            title: row['title'] as String?,
+            artist: row['artist'] as String?,
+            album: row['album'] as String?,
+            genre: row['genre'] as String?,
+          ),
+        );
+      }
+      if (!mounted || tracks.isEmpty || _playback.queue.isNotEmpty) return;
+      if (!hasTelegram) _linuxLibrary = List.of(tracks);
+      final index = saved['queue_index'] is int
+          ? restoredIndex
+          : tracks.indexWhere((item) => item.path == saved['path']);
+      _playback.setRepeat(saved['repeat'] == true);
+      _playback.setShuffle(saved['shuffle'] == true);
+      if (saved['volume'] is num) {
+        await _playback.setVolume((saved['volume'] as num).toDouble());
+      }
+      await _playback.loadQueue(
+        tracks,
+        initialIndex: index < 0 ? 0 : index,
+        autoplay: false,
+      );
+      if (index >= 0 && saved['position'] is int) {
+        await _playback.seek(Duration(milliseconds: saved['position'] as int));
+      }
+    } catch (_) {
+      // A missing or invalid saved queue starts with an empty player.
+    } finally {
+      _restoring = false;
+    }
   }
 
   Future<void> _restoreLibrary() async {
@@ -1184,6 +1494,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    _linuxQueueScroll.dispose();
     TelegramClient.shared.removeListener(_onProxyConnectionChanged);
     DownloadedTracks.shared.removeListener(_onDownloadStatusChanged);
     _saveTimer?.cancel();
@@ -1324,6 +1635,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _switchToLocal() {
     Navigator.of(context).popUntil((route) => route.isFirst);
+    if (widget.linuxDesktop) {
+      setState(() {
+        _linuxTelegram = false;
+        _linuxCategory = 'All songs';
+      });
+      return;
+    }
     _showTrackList(
       const [],
       fromLibrary: true,
@@ -1335,6 +1653,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _switchToTelegram() {
     Navigator.of(context).popUntil((route) => route.isFirst);
     _startTelegramBootstrap();
+    if (widget.linuxDesktop) {
+      setState(() {
+        _linuxTelegram = true;
+        _linuxCategory = 'All songs';
+      });
+      return;
+    }
     _showTrackList(_playback.queue, initialTelegram: true);
   }
 
@@ -1808,6 +2133,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               AppPalette.tokyo => 'Tokyo Night',
               AppPalette.solarized => 'Solarized',
               AppPalette.oneDark => 'One Dark',
+              _ => goghPresets[value.name]!.name,
             };
             List<Color> swatches(AppPalette value) => switch (value) {
               AppPalette.gram => [
@@ -1849,6 +2175,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 const Color(0xff282c34),
                 const Color(0xff3e4451),
                 const Color(0xff61afef),
+              ],
+              _ => [
+                goghPresets[value.name]!.background,
+                goghPresets[value.name]!.red,
+                goghPresets[value.name]!.green,
+                goghPresets[value.name]!.accent,
               ],
             };
             return Scaffold(
@@ -1961,6 +2293,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             onTap: () {
                               if (value == appPalette.value) return;
                               appPalette.value = value;
+                              final preset = goghPresets[value.name];
+                              if (preset != null) {
+                                appThemeMode.value = preset.light
+                                    ? ThemeMode.light
+                                    : ThemeMode.dark;
+                              }
                               customAccent.value = null;
                               customThemeColors.value = {};
                               saveAppearance();
@@ -2188,6 +2526,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       const Spacer(),
                       Wrap(
                         children: [
+                          _favoriteButton(labeled: true),
                           TextButton.icon(
                             onPressed: () =>
                                 _playback.setRepeat(!_playback.repeat),
@@ -2382,7 +2721,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _linuxChooseMusic() async {
     try {
       final tracks = await _loadLocalTracks();
-      if (tracks.isNotEmpty) await _playback.loadQueue(tracks);
+      if (tracks.isNotEmpty) {
+        setState(() {
+          _linuxLibrary = tracks;
+          _linuxTelegram = false;
+          _linuxCategory = 'All songs';
+        });
+        await _playback.loadQueue(tracks);
+      }
     } catch (_) {
       if (mounted) {
         _showMessage(
@@ -2395,6 +2741,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _linuxPlayer() {
     final colors = Theme.of(context).colorScheme;
+    final selectedBackground = Color.alphaBlend(
+      colors.primary.withValues(alpha: .12),
+      colors.surface,
+    );
+    double contrast(Color a, Color b) {
+      final first = a.computeLuminance();
+      final second = b.computeLuminance();
+      return (math.max(first, second) + .05) / (math.min(first, second) + .05);
+    }
+
+    final selectedForeground =
+        contrast(colors.onSurface, selectedBackground) >= 4.5
+        ? colors.onSurface
+        : contrast(Colors.white, selectedBackground) >=
+              contrast(Colors.black, selectedBackground)
+        ? Colors.white
+        : Colors.black;
+    Widget visibleSlider(Widget slider) => SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 5,
+        trackShape: const RoundedRectSliderTrackShape(),
+        activeTrackColor: colors.primary,
+        inactiveTrackColor: colors.onSurfaceVariant.withValues(alpha: .55),
+        disabledActiveTrackColor: colors.onSurfaceVariant.withValues(alpha: .4),
+        disabledInactiveTrackColor: colors.onSurfaceVariant.withValues(
+          alpha: .4,
+        ),
+        thumbColor: colors.primary,
+      ),
+      child: slider,
+    );
     final current = track;
     final durationMs = _playback.duration.inMilliseconds;
     final positionMs = _playback.position.inMilliseconds.clamp(
@@ -2405,7 +2782,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final details = Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Flexible(child: AspectRatio(aspectRatio: 1, child: _cover(current))),
+        Flexible(
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _cover(current),
+                if (current != null)
+                  Positioned(right: 12, bottom: 12, child: _trackMenu()),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 20),
         Text(
           current?.displayTitle ?? 'Choose music to start',
@@ -2423,7 +2812,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       ],
     );
-    final queueView = Column(
+    final currentQueueView = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
@@ -2474,32 +2863,179 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 )
               : ListView.builder(
+                  controller: _linuxQueueScroll,
+                  padding: EdgeInsets.zero,
+                  itemExtent: 72,
                   itemCount: queue.length,
                   itemBuilder: (context, index) {
                     final song = queue[index];
                     final selected = index == _playback.currentIndex;
-                    return ListTile(
-                      selected: selected,
-                      selectedTileColor: colors.primaryContainer.withValues(
-                        alpha: .45,
+                    return Material(
+                      color: Colors.transparent,
+                        clipBehavior: Clip.hardEdge,
+                      child: ListTile(
+                        selected: selected,
+                        selectedTileColor: selectedBackground,
+                        selectedColor: selectedForeground,
+                        leading: _cover(song, size: 44),
+                        title: Text(
+                          song.displayTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          song.displayArtist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: selected
+                            ? Icon(Icons.graphic_eq, color: selectedForeground)
+                            : null,
+                        onTap: () => _playback.playTrackAt(index),
                       ),
-                      leading: _cover(song, size: 44),
-                      title: Text(
-                        song.displayTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        song.displayArtist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: selected
-                          ? Icon(Icons.graphic_eq, color: colors.primary)
-                          : null,
-                      onTap: () => _playback.playTrackAt(index),
                     );
                   },
+                ),
+        ),
+      ],
+    );
+    final categories = _linuxTelegram
+        ? const [
+            'Current queue',
+            'All songs',
+            'Playlists',
+            'Artists',
+            'Albums',
+            'Genres',
+          ]
+        : const [
+            'Current queue',
+            'All songs',
+            'Playlists',
+            'Artists',
+            'Albums',
+            'Genres',
+          ];
+    final queueView = Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _linuxTelegram ? 'Telegram music' : 'Local music',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _linuxTelegram = !_linuxTelegram;
+                    _linuxCategory = 'All songs';
+                  });
+                  if (_linuxTelegram) _startTelegramBootstrap();
+                },
+                icon: Icon(
+                  _linuxTelegram
+                      ? Icons.library_music_outlined
+                      : Icons.send_outlined,
+                ),
+                label: Text(_linuxTelegram ? 'Local' : 'Telegram'),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 52,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            children: [
+              for (final category in categories)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(category),
+                    selected: _linuxCategory == category,
+                    selectedColor: colors.primary,
+                    checkmarkColor: colors.onPrimary,
+                    labelStyle: TextStyle(
+                      color: _linuxCategory == category
+                          ? colors.onPrimary
+                          : colors.onSurface,
+                    ),
+                    onSelected: (_) =>
+                        setState(() => _linuxCategory = category),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _linuxCategory == 'Current queue'
+              ? currentQueueView
+              : _linuxTelegram
+              ? TelegramLibrarySheet(
+                  status: _telegramSheetStatus,
+                  category: _linuxCategory,
+                  hideHeader: true,
+                  onPlay: _playTelegram,
+                  onDownload: _downloadTelegramMessage,
+                  onDownloadPlaylist: _queuePlaylistDownload,
+                  onOpenLocal: () => setState(() {
+                    _linuxTelegram = false;
+                    _linuxCategory = 'All songs';
+                  }),
+                  onOpenTelegramSettings: _openTelegramLogin,
+                )
+              : _linuxCategory == 'All songs'
+              ? Column(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _linuxChooseMusic,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Choose music'),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _linuxLibrary.length,
+                        itemBuilder: (context, index) {
+                          final song = _linuxLibrary[index];
+                          return ListTile(
+                            leading: _cover(song, size: 44),
+                            title: Text(
+                              song.displayTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              song.displayArtist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => _playback.loadQueue(
+                              _linuxLibrary,
+                              initialIndex: index,
+                              allSongs: true,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                )
+              : LocalCategorySheet(
+                  key: ValueKey(_linuxCategory),
+                  category: _linuxCategory,
+                  tracks: _linuxLibrary,
+                  embedded: true,
+                  onBack: () => setState(() => _linuxCategory = 'All songs'),
+                  onPlay: (tracks, index) =>
+                      _playback.loadQueue(tracks, initialIndex: index),
                 ),
         ),
       ],
@@ -2507,22 +3043,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('MusicGram'),
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         actions: [
-          IconButton(
-            tooltip: 'Telegram music',
-            onPressed: _openTelegramLogin,
-            icon: const Icon(Icons.send_outlined),
-          ),
-          IconButton(
-            tooltip: 'Lyrics',
-            onPressed: current == null ? null : _showLyrics,
-            icon: const Icon(Icons.lyrics_outlined),
-          ),
-          IconButton(
-            tooltip: 'Choose music files',
-            onPressed: _linuxChooseMusic,
-            icon: const Icon(Icons.library_add_outlined),
-          ),
           IconButton(
             key: const Key('settingsButton'),
             tooltip: 'Settings',
@@ -2584,15 +3107,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   children: [
                     Text(_formatTime(_playback.position)),
                     Expanded(
-                      child: Slider(
-                        value: durationMs > 0 ? positionMs / durationMs : 0,
-                        onChanged: durationMs > 0
-                            ? (value) => _playback.seek(
-                                Duration(
-                                  milliseconds: (value * durationMs).round(),
-                                ),
-                              )
-                            : null,
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: _telegramStream.bufferRevision,
+                        builder: (context, _, _) => visibleSlider(
+                          Slider(
+                            value: durationMs > 0 ? positionMs / durationMs : 0,
+                            secondaryTrackValue: current?.telegramFileId != null
+                                ? _telegramStream.bufferedFraction(
+                                    current?.path,
+                                  )
+                                : null,
+                            onChanged: durationMs > 0
+                                ? (value) => _playback.seek(
+                                    Duration(
+                                      milliseconds: (value * durationMs)
+                                          .round(),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ),
                       ),
                     ),
                     Text(_formatTime(_playback.duration)),
@@ -2601,6 +3135,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    _favoriteButton(),
                     IconButton(
                       tooltip: 'Shuffle',
                       isSelected: _playback.shuffle,
@@ -2617,6 +3152,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                     IconButton.filled(
                       tooltip: _playback.showPauseControl ? 'Pause' : 'Play',
+                      style: IconButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: colors.onPrimary,
+                      ),
                       onPressed: current == null
                           ? null
                           : _playback.togglePlayback,
@@ -2645,9 +3184,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       const Icon(Icons.volume_up_outlined),
                       SizedBox(
                         width: 120,
-                        child: Slider(
-                          value: _playback.volume.clamp(0.0, 1.0),
-                          onChanged: _playback.setVolume,
+                        child: visibleSlider(
+                          Slider(
+                            value: _playback.volume.clamp(0.0, 1.0),
+                            onChanged: _playback.setVolume,
+                          ),
                         ),
                       ),
                     ],
@@ -2903,6 +3444,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ? CrossAxisAlignment.end
                     : CrossAxisAlignment.start,
                 children: [
+                  _favoriteButton(labeled: true),
                   TextButton.icon(
                     onPressed: () => _playback.setRepeat(!_playback.repeat),
                     style: TextButton.styleFrom(
@@ -2960,7 +3502,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     child: IconButton.filled(
       tooltip: tooltip,
       onPressed: onPressed,
-      style: IconButton.styleFrom(backgroundColor: color),
+      style: IconButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: color.computeLuminance() > 0.179
+            ? Colors.black
+            : Colors.white,
+      ),
       iconSize: diameter * .46,
       icon: Icon(icon ?? fallback),
     ),
@@ -3119,7 +3666,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _trackMenu() => PopupMenuButton<String>(
     tooltip: 'Current track actions',
     icon: const Icon(Icons.menu),
-    style: IconButton.styleFrom(backgroundColor: _accentColor),
+    style: IconButton.styleFrom(
+      backgroundColor: _accentColor,
+      foregroundColor: Theme.of(context).colorScheme.onPrimary,
+    ),
     onSelected: (action) {
       final song = track;
       if (song == null) return;
@@ -3211,6 +3761,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     bool initialTelegram = false,
     String? initialLocalCategory,
   }) {
+    final queueScroll = ScrollController();
+    String? lastQueueTrack;
     var search = '';
     var showingTelegram = initialTelegram;
     var telegramCategory = 'All songs';
@@ -3355,6 +3907,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     )
                     .toList();
+                if (!fromLibrary && localCategory == null) {
+                  final key = '${_playback.currentIndex}:${track?.path}';
+                  final position = indices.indexOf(_playback.currentIndex);
+                  if (key != lastQueueTrack && position >= 0) {
+                    lastQueueTrack = key;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!context.mounted || !queueScroll.hasClients) return;
+                      final target = (position * 72.0).clamp(
+                        0.0,
+                        queueScroll.position.maxScrollExtent,
+                      );
+                      queueScroll.animateTo(
+                        target,
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOut,
+                      );
+                    });
+                  }
+                }
                 if (localCategory != null) {
                   final sheetHeight =
                       (MediaQuery.sizeOf(context).height * .8 -
@@ -3625,6 +4196,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     child: Text('No local music found.'),
                                   )
                                 : ListView.builder(
+                                    controller: queueScroll,
+                                    itemExtent: 72,
                                     itemCount: indices.length,
                                     itemBuilder: (context, position) {
                                       final index = indices[position];
@@ -3705,7 +4278,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           );
         },
       ),
-    );
+    ).whenComplete(queueScroll.dispose);
   }
 }
 
